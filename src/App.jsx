@@ -43,20 +43,20 @@ function App() {
     try { setWorkspaces(await invoke('list_workspaces', { query: q.trim() || null })); }
     catch (e) { setError(errorText(e)); }
   }, []);
+  const loadDockImages = useCallback(async () => {
+    if (!captureWindow) return;
+    try {
+      const paths = await invoke('take_pending_dock_images');
+      if (paths.length) {
+        setCaptureIndex(0);
+        setCaptureItems((items) => [...items, ...paths]);
+      }
+    } catch (e) { setError(errorText(e)); }
+  }, [captureWindow]);
   useEffect(() => { refresh(search); }, [refresh, search]);
   useEffect(() => { invoke('get_settings').then(setSettings).catch(() => {}); }, []);
   useEffect(() => {
     let unlisteners = [];
-    const loadDockImages = async () => {
-      if (!captureWindow) return;
-      try {
-        const paths = await invoke('take_pending_dock_images');
-        if (paths.length) {
-          setCaptureItems((items) => [...items, ...paths]);
-          setCaptureIndex((index) => index);
-        }
-      } catch (e) { setError(errorText(e)); }
-    };
     Promise.all([
       listen('screenshot-detected', (e) => { setCaptureItems((items) => [...items, e.payload]); setCaptureIndex((i) => captureItems.length ? i : 0); getCurrentWindow().label !== 'capture' && invoke('show_capture').catch(() => {}); }),
       listen('new-workspace', () => createEmpty()),
@@ -64,9 +64,16 @@ function App() {
       listen('workspace-created', (e) => { setActive(e.payload); setPage('workspace'); setError(''); }),
       listen('workspace-updated', (e) => { setActive(e.payload); setPage('workspace'); setError(''); }),
       listen('dock-files-opened', loadDockImages),
-    ]).then((fns) => { unlisteners = fns; loadDockImages(); });
+    ]).then(async (fns) => {
+      unlisteners = fns;
+      if (captureWindow) {
+        const unlistenFocus = await getCurrentWindow().onFocusChanged(({ payload }) => { if (payload) loadDockImages(); });
+        unlisteners.push(unlistenFocus);
+      }
+      await loadDockImages();
+    });
     return () => unlisteners.forEach((f) => f());
-  }, []);
+  }, [captureWindow, loadDockImages]);
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
   useEffect(() => {
     if (!captureWindow) return;
