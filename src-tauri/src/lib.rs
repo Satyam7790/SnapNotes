@@ -6,11 +6,12 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::{collections::HashSet, path::{Path, PathBuf}, sync::Mutex, time::Duration};
-use tauri::{Emitter, Manager, WindowEvent};
+use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 static WATCHER: Lazy<Mutex<Option<notify::RecommendedWatcher>>> = Lazy::new(|| Mutex::new(None));
 static SEEN_FILES: Lazy<Mutex<HashSet<PathBuf>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+static PENDING_DOCK_FILES: Lazy<Mutex<Vec<String>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 #[derive(Deserialize)]
 struct SaveInput { id: String, title: String, document: serde_json::Value }
@@ -64,6 +65,12 @@ fn get_settings(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
 #[tauri::command]
 fn show_capture(app: tauri::AppHandle) { show_capture_window(&app); }
 #[tauri::command]
+fn show_main(app: tauri::AppHandle) { show_main_window(&app); }
+#[tauri::command]
+fn take_pending_dock_images() -> Vec<String> {
+    PENDING_DOCK_FILES.lock().map(|mut files| files.drain(..).collect()).unwrap_or_default()
+}
+#[tauri::command]
 fn set_watch_directory(app: tauri::AppHandle, path: String) -> Result<(), String> {
     start_watcher(&app, PathBuf::from(&path))?;
     let config = app.path().app_config_dir().map_err(|_| "Could not access settings".to_string())?;
@@ -106,7 +113,7 @@ fn start_watcher(app: &tauri::AppHandle, dir: PathBuf) -> Result<(), String> {
     Ok(())
 }
 fn show_capture_window(app: &tauri::AppHandle) { if let Some(w) = app.get_webview_window("capture") { let _ = w.show(); let _ = w.set_focus(); } }
-fn show_main(app: &tauri::AppHandle) { if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); } }
+fn show_main_window(app: &tauri::AppHandle) { if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); } }
 
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -130,8 +137,8 @@ pub fn run() {
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "Quit Quickspace", true, None::<&str>)?;
             let menu = tauri::menu::Menu::with_items(app, &[&open, &capture, &create, &settings, &quit])?;
             let tray_icon = tauri::tray::TrayIconBuilder::new().menu(&menu).on_menu_event(move |app, event| match event.id().as_ref() {
-                "open" => show_main(app), "capture" => show_capture_window(app), "create" => { show_main(app); let _ = app.emit("new-workspace", ()); },
-                "settings" => { show_main(app); let _ = app.emit("open-settings", ()); }, "quit" => app.exit(0), _ => {}
+                "open" => show_main_window(app), "capture" => show_capture_window(app), "create" => { show_main_window(app); let _ = app.emit("new-workspace", ()); },
+                "settings" => { show_main_window(app); let _ = app.emit("open-settings", ()); }, "quit" => app.exit(0), _ => {}
             }).build(app)?;
             let _ = tray_icon;
             let settings_path = app.path().app_config_dir()?.join("settings.json");
@@ -140,6 +147,23 @@ pub fn run() {
             if let Some(dir) = watch_dir { let _ = start_watcher(&handle, dir); }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![list_workspaces,get_workspace,save_workspace,create_workspace,add_image,delete_workspace,rename_workspace,get_settings,set_watch_directory,show_capture]);
-    builder.on_window_event(|window, event| { if window.label() == "main" { if let WindowEvent::CloseRequested { api, .. } = event { api.prevent_close(); let _ = window.hide(); } } }).run(tauri::generate_context!()).expect("error while running Quickspace");
+        .invoke_handler(tauri::generate_handler![list_workspaces,get_workspace,save_workspace,create_workspace,add_image,delete_workspace,rename_workspace,get_settings,set_watch_directory,show_capture,show_main,take_pending_dock_images]);
+    let app = builder.on_window_event(|window, event| { if window.label() == "main" { if let WindowEvent::CloseRequested { api, .. } = event { api.prevent_close(); let _ = window.hide(); } } }).build(tauri::generate_context!()).expect("error while building Quickspace");
+    app.run(|app, event| {
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Opened { urls } = event {
+            let paths: Vec<String> = urls.into_iter()
+                .filter_map(|url| url.to_file_path().ok())
+                .filter(|path| is_image(path))
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            if !paths.is_empty() {
+                if let Ok(mut pending) = PENDING_DOCK_FILES.lock() { pending.extend(paths); }
+                show_capture_window(app);
+                let _ = app.emit("dock-files-opened", ());
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (app, event);
+    });
 }

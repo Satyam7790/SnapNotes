@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { emit, listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -11,9 +11,9 @@ import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
-import { all, createLowlight } from 'lowlight';
+import { common, createLowlight } from 'lowlight';
 
-const lowlight = createLowlight(all);
+const lowlight = createLowlight(common);
 const emptyDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
 const isCapture = () => getCurrentWindow().label === 'capture';
 const imageUrl = (path) => path ? convertFileSrc(path) : '';
@@ -47,11 +47,24 @@ function App() {
   useEffect(() => { invoke('get_settings').then(setSettings).catch(() => {}); }, []);
   useEffect(() => {
     let unlisteners = [];
+    const loadDockImages = async () => {
+      if (!captureWindow) return;
+      try {
+        const paths = await invoke('take_pending_dock_images');
+        if (paths.length) {
+          setCaptureItems((items) => [...items, ...paths]);
+          setCaptureIndex((index) => index);
+        }
+      } catch (e) { setError(errorText(e)); }
+    };
     Promise.all([
       listen('screenshot-detected', (e) => { setCaptureItems((items) => [...items, e.payload]); setCaptureIndex((i) => captureItems.length ? i : 0); getCurrentWindow().label !== 'capture' && invoke('show_capture').catch(() => {}); }),
       listen('new-workspace', () => createEmpty()),
       listen('open-settings', () => setPage('settings')),
-    ]).then((fns) => { unlisteners = fns; });
+      listen('workspace-created', (e) => { setActive(e.payload); setPage('workspace'); setError(''); }),
+      listen('workspace-updated', (e) => { setActive(e.payload); setPage('workspace'); setError(''); }),
+      listen('dock-files-opened', loadDockImages),
+    ]).then((fns) => { unlisteners = fns; loadDockImages(); });
     return () => unlisteners.forEach((f) => f());
   }, []);
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light'; }, [dark]);
@@ -72,7 +85,16 @@ function App() {
 
   const createEmpty = async (paths = []) => {
     setBusy(true); setError('');
-    try { const workspace = await invoke('create_workspace', { title: paths.length ? 'Untitled workspace' : 'Untitled workspace', imagePaths: paths }); setActive(workspace); setPage('workspace'); if (captureWindow) closeCaptureItem(); await refresh(search); }
+    try {
+      const workspace = await invoke('create_workspace', { title: 'Untitled workspace', imagePaths: paths });
+      if (captureWindow) {
+        await emit('workspace-created', workspace);
+        await invoke('show_main');
+        await closeCaptureItem();
+      } else {
+        setActive(workspace); setPage('workspace'); await refresh(search);
+      }
+    }
     catch (e) { setError(errorText(e)); } finally { setBusy(false); }
   };
   const openWorkspace = async (id) => { try { setActive(await invoke('get_workspace', { id })); setPage('workspace'); } catch (e) { setError(errorText(e)); } };
@@ -119,7 +141,7 @@ function CapturePopup({ item, count, index, setIndex, onCreate, onDismiss, busy,
   useEffect(() => { invoke('list_workspaces', { query: null }).then(setSpaces).catch(() => {}); }, []);
   useEffect(() => { if (!item && count === 0) return; }, [item, count]);
   const addTo = async (w) => {
-    try { const path = await invoke('add_image', { path: item, workspaceId: w.id }); const doc = JSON.parse(JSON.stringify(w.document)); doc.content ||= []; doc.content.push({ type: 'image', attrs: { src: path, alt: 'Screenshot' } }, { type: 'paragraph' }); await invoke('save_workspace', { input: { id: w.id, title: w.title, document: doc } }); onDismiss(); }
+    try { const path = await invoke('add_image', { path: item, workspaceId: w.id }); const doc = JSON.parse(JSON.stringify(w.document)); doc.content ||= []; doc.content.push({ type: 'image', attrs: { src: path, alt: 'Screenshot' } }, { type: 'paragraph' }); const updated = await invoke('save_workspace', { input: { id: w.id, title: w.title, document: doc } }); await emit('workspace-updated', updated); await invoke('show_main'); onDismiss(); }
     catch (e) { onError(errorText(e)); }
   };
   const filename = item?.split(/[\\/]/).pop() || 'Drop an image to get started';

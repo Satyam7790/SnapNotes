@@ -16,7 +16,13 @@
     ],
     "security": { "assetProtocol": { "enable": true, "scope": ["$APPDATA/assets/**"] }, "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost" }
   },
-  "bundle": { "active": true, "targets": ["app", "dmg"], "category": "Productivity", "shortDescription": "Keep the context behind your screenshots" },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "category": "Productivity",
+    "shortDescription": "Keep the context behind your screenshots",
+    "fileAssociations": [{ "ext": ["png", "jpg", "jpeg", "webp"], "name": "Screenshot image", "role": "Viewer", "rank": "None" }]
+  },
   "plugins": {
     "fs": { "requireLiteralLeadingDot": false }
   }
