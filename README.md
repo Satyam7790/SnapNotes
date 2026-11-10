@@ -1,6 +1,6 @@
 # SnapNotes
 
-Quickspace is a local-first macOS screenshot notebook. It watches a folder for screenshots, copies imports into its private app data folder, and stores workspace documents in SQLite.
+SnapNotes is a local-first macOS screenshot notebook. It watches a folder for screenshots, copies imports into its private app data folder, and stores workspace documents in SQLite.
 
 ## Requirements
 
