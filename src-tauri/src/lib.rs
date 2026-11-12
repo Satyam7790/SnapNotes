@@ -158,9 +158,12 @@ pub fn run() {
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect();
             if !paths.is_empty() {
-                if let Ok(mut pending) = PENDING_DOCK_FILES.lock() { pending.extend(paths); }
+                if let Ok(mut pending) = PENDING_DOCK_FILES.lock() { pending.extend(paths.clone()); }
                 show_capture_window(app);
-                let _ = app.emit("dock-files-opened", ());
+                // Send the paths directly as well as keeping them queued. The capture
+                // webview can miss the event while starting, so it also drains the queue
+                // once its listener is ready or it receives focus.
+                let _ = app.emit_to("capture", "dock-files-opened", paths);
             }
         }
         #[cfg(not(target_os = "macos"))]

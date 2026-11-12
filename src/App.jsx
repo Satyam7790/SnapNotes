@@ -43,13 +43,18 @@ function App() {
     try { setWorkspaces(await invoke('list_workspaces', { query: q.trim() || null })); }
     catch (e) { setError(errorText(e)); }
   }, []);
-  const loadDockImages = useCallback(async () => {
+  const loadDockImages = useCallback(async (eventPaths = []) => {
     if (!captureWindow) return;
     try {
-      const paths = await invoke('take_pending_dock_images');
+      const queuedPaths = await invoke('take_pending_dock_images');
+      const paths = [...new Set([...eventPaths, ...queuedPaths])];
       if (paths.length) {
-        setCaptureIndex(0);
-        setCaptureItems((items) => [...items, ...paths]);
+        setCaptureItems((items) => {
+          const known = new Set(items);
+          const incoming = paths.filter((path) => !known.has(path));
+          if (!items.length && incoming.length) setCaptureIndex(0);
+          return incoming.length ? [...items, ...incoming] : items;
+        });
       }
     } catch (e) { setError(errorText(e)); }
   }, [captureWindow]);
@@ -63,7 +68,7 @@ function App() {
       listen('open-settings', () => setPage('settings')),
       listen('workspace-created', (e) => { setActive(e.payload); setPage('workspace'); setError(''); }),
       listen('workspace-updated', (e) => { setActive(e.payload); setPage('workspace'); setError(''); }),
-      listen('dock-files-opened', loadDockImages),
+      listen('dock-files-opened', (e) => loadDockImages(e.payload || [])),
     ]).then(async (fns) => {
       unlisteners = fns;
       if (captureWindow) {

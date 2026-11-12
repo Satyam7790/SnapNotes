@@ -21,7 +21,7 @@
     "targets": ["app", "dmg"],
     "category": "Productivity",
     "shortDescription": "Keep the context behind your screenshots",
-    "fileAssociations": [{ "ext": ["png", "jpg", "jpeg", "webp"], "name": "Screenshot image", "role": "Viewer", "rank": "None" }]
+    "fileAssociations": [{ "ext": ["png", "jpg", "jpeg", "webp"], "name": "Screenshot image", "role": "Viewer", "rank": "Alternate" }]
   },
   "plugins": {
     "fs": { "requireLiteralLeadingDot": false }
