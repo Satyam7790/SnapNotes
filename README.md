@@ -1,6 +1,6 @@
 # SnapNotes
 
-SnapNotes is a local-first macOS screenshot notebook. It watches a folder for screenshots, copies imports into its private app data folder, and stores workspace documents in SQLite.
+Want to give ur screenshot a context ,use SnapNotes . SnapNotes is a local-first macOS screenshot notebook. It watches a folder for screenshots, copies imports into its private app data folder, and stores workspace documents in SQLite.
 
 ## Requirements
 
