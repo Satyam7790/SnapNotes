@@ -2,6 +2,9 @@
 
 Want to give ur screenshot a context ,use SnapNotes . SnapNotes is a local-first macOS screenshot notebook. It watches a folder for screenshots, copies imports into its private app data folder, and stores workspace documents in SQLite.
 
+## How to use :
+Download the dmg file from github releases then run the app . Add the app to ur docker (for effective use ) , take a screenshot and drag to ur app icon on the dock and ur good to go . 
+
 ## Requirements
 
 - macOS 12 or later
