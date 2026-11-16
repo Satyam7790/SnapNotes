@@ -63,7 +63,10 @@ function App() {
   useEffect(() => {
     let unlisteners = [];
     Promise.all([
-      listen('screenshot-detected', (e) => { setCaptureItems((items) => [...items, e.payload]); setCaptureIndex((i) => captureItems.length ? i : 0); getCurrentWindow().label !== 'capture' && invoke('show_capture').catch(() => {}); }),
+      listen('screenshot-detected', (e) => {
+        if (captureWindow) loadDockImages([e.payload]);
+        else invoke('show_capture').catch(() => {});
+      }),
       listen('new-workspace', () => createEmpty()),
       listen('open-settings', () => setPage('settings')),
       listen('workspace-created', (e) => { setActive(e.payload); setPage('workspace'); setError(''); }),

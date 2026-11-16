@@ -70,6 +70,11 @@ fn show_main(app: tauri::AppHandle) { show_main_window(&app); }
 fn take_pending_dock_images() -> Vec<String> {
     PENDING_DOCK_FILES.lock().map(|mut files| files.drain(..).collect()).unwrap_or_default()
 }
+fn queue_capture_image(path: String) {
+    if let Ok(mut pending) = PENDING_DOCK_FILES.lock() {
+        if !pending.iter().any(|queued| queued == &path) { pending.push(path); }
+    }
+}
 #[tauri::command]
 fn set_watch_directory(app: tauri::AppHandle, path: String) -> Result<(), String> {
     start_watcher(&app, PathBuf::from(&path))?;
@@ -98,7 +103,14 @@ fn start_watcher(app: &tauri::AppHandle, dir: PathBuf) -> Result<(), String> {
                             last_size = size;
                             if stable >= 2 {
                                 if let Ok(mut seen) = SEEN_FILES.lock() {
-                                    if seen.insert(path.clone()) { let _ = app.emit("screenshot-detected", path.to_string_lossy().to_string()); }
+                                    if seen.insert(path.clone()) {
+                                        let path = path.to_string_lossy().into_owned();
+                                        // Keep a durable-in-process copy before notifying the UI.
+                                        // A cold-start or hidden capture webview can miss events.
+                                        queue_capture_image(path.clone());
+                                        show_capture_window(&app);
+                                        let _ = app.emit("screenshot-detected", path);
+                                    }
                                 }
                                 break;
                             }
@@ -111,6 +123,39 @@ fn start_watcher(app: &tauri::AppHandle, dir: PathBuf) -> Result<(), String> {
     watcher.watch(&dir, RecursiveMode::NonRecursive).map_err(|_| "Could not watch that folder".to_string())?;
     *WATCHER.lock().map_err(|_| "Watcher is unavailable".to_string())? = Some(watcher);
     Ok(())
+}
+fn recover_recent_screenshots(app: &tauri::AppHandle, dir: &Path) {
+    // A screenshot may be fully written before a cold app launch, so the filesystem
+    // watcher never receives its Create event. Recover recent images from the watched
+    // folder as a fallback for that exact launch gap.
+    let Ok(entries) = std::fs::read_dir(dir) else { return; };
+    let cutoff = Duration::from_secs(30);
+    let mut recent = entries.filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !is_image(&path) { return None; }
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_file() || metadata.len() == 0 { return None; }
+            let modified = metadata.modified().ok()?;
+            if modified.elapsed().unwrap_or(Duration::MAX) > cutoff { return None; }
+            Some((modified, path))
+        })
+        .collect::<Vec<_>>();
+    recent.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut recovered = Vec::new();
+    if let Ok(mut seen) = SEEN_FILES.lock() {
+        for (_, path) in recent {
+            if seen.insert(path.clone()) {
+                recovered.push(path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    if recovered.is_empty() { return; }
+
+    for path in &recovered { queue_capture_image(path.clone()); }
+    show_capture_window(app);
+    for path in recovered { let _ = app.emit("screenshot-detected", path); }
 }
 fn show_capture_window(app: &tauri::AppHandle) { if let Some(w) = app.get_webview_window("capture") { let _ = w.show(); let _ = w.set_focus(); } }
 fn show_main_window(app: &tauri::AppHandle) { if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); } }
@@ -144,7 +189,11 @@ pub fn run() {
             let settings_path = app.path().app_config_dir()?.join("settings.json");
             let configured = std::fs::read_to_string(settings_path).ok().and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok()).and_then(|v| v["watch_dir"].as_str().map(str::to_owned)).filter(|s| !s.is_empty());
             let watch_dir = configured.map(PathBuf::from).or_else(|| app.path().desktop_dir().ok());
-            if let Some(dir) = watch_dir { let _ = start_watcher(&handle, dir); }
+            if let Some(dir) = watch_dir {
+                if start_watcher(&handle, dir.clone()).is_ok() {
+                    recover_recent_screenshots(&handle, &dir);
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![list_workspaces,get_workspace,save_workspace,create_workspace,add_image,delete_workspace,rename_workspace,get_settings,set_watch_directory,show_capture,show_main,take_pending_dock_images]);
@@ -158,7 +207,7 @@ pub fn run() {
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect();
             if !paths.is_empty() {
-                if let Ok(mut pending) = PENDING_DOCK_FILES.lock() { pending.extend(paths.clone()); }
+                for path in paths.iter().cloned() { queue_capture_image(path); }
                 show_capture_window(app);
                 // Send the paths directly as well as keeping them queued. The capture
                 // webview can miss the event while starting, so it also drains the queue
